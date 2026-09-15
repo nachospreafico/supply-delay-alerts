@@ -1,45 +1,64 @@
 # Supply Delay Alerts
 
-Python automation for identifying overdue supply orders and producing an actionable order-level report for delivery follow-up.
-
-**Status:** In development. CSV loading, required-column checks, duplicate-ID validation, status filtering, and date conversion are being assembled into the workflow below.
+Python automation that turns an order CSV into a report of active overdue deliveries. It validates the input schema and order IDs, applies explicit eligibility rules, and exports one row per order for follow-up.
 
 ## Dataset
 
-The project uses a synthetic dataset designed with 75,000 orders and 17 columns. It contains no real company or customer data.
+The project uses 75,000 synthetic orders across 17 columns, eight business units, and 120 products. No real company or customer data is used.
 
 - Input: `data/supply_orders.csv`
-- Snapshot: `2026-09-12`
-- Field definitions: [Dataset guide](docs/DATASET_GUIDE.md)
+- Dataset snapshot: `2026-09-12`
+- Field definitions and methodology: [Dataset guide](docs/DATASET_GUIDE.md)
 
 ## Business rules
 
-An order qualifies when `promised_delivery_date < snapshot_date` and its status exactly matches `Pending`, `Shipped`, or `Partially Delivered`.
+An order qualifies when its status exactly matches `Pending`, `Shipped`, or `Partially Delivered` and `promised_delivery_date < snapshot_date`.
 
-- Delivered and cancelled orders are excluded.
-- Orders due on the snapshot date are excluded.
-- Unknown or missing statuses do not qualify; values are not inferred or corrected.
-- Partial deliveries remain eligible because units are outstanding.
-- `actual_delivery_date` records full completion and may be blank for other statuses.
+- Delivered, cancelled, unknown, and missing statuses are excluded. Status values are not inferred or corrected.
+- Orders due on or after the snapshot date are excluded. Partial deliveries remain eligible while units are outstanding.
+- Missing or invalid comparison dates become `NaT`; affected orders are excluded.
+- `actual_delivery_date` is preserved as context and is not used in filtering or calculations.
 
-All 17 input columns must exist, and duplicate `order_id` values are rejected before filtering.
+All 17 required columns must exist. Duplicate `order_id` values are rejected before filtering. The workflow uses each row's snapshot date, not today's date.
 
-## Setup and testing
+## Setup and usage
 
-Place the CSV in `data/`. From the repository root:
+Place the dataset at `data/supply_orders.csv`. From the repository root:
 
 ```bash
 python -m pip install -r requirements.txt
-python -m pytest
+python src/supply_delay_alerts.py
 ```
 
-The project uses pandas and pytest. Processing code lives in `src/supply_delay_alerts.py`; tests live in `tests/`.
+The script resolves default paths relative to the project using `pathlib.Path` and creates the output directory if needed. To use custom paths from Python:
 
-## Output contract
+```python
+from pathlib import Path
+from src.supply_delay_alerts import supply_delay_alerts
 
-The completed workflow will write `outputs/overdue_orders.csv`: one row per qualifying order, all 17 original columns in their original order, and an integer `days_overdue` column appended last.
+report = supply_delay_alerts(
+    Path("data/supply_orders.csv"),
+    Path("outputs/overdue_orders.csv"),
+)
+```
 
-`days_overdue` is the calendar-day difference between `snapshot_date` and `promised_delivery_date`. No aggregation is performed. The export omits the pandas index; no qualifying orders produces headers only. Generated reports are excluded from version control.
+The function saves the report and returns the resulting DataFrame.
+
+## Output
+
+`outputs/overdue_orders.csv` retains the original columns and appends integer `days_overdue`, calculated as `snapshot_date - promised_delivery_date` in calendar days. The supplied schema produces 18 columns. No aggregation is performed.
+
+Exports omit the pandas index and preserve qualifying row order. No eligible orders, including a valid header-only input, produces headers only. Successful reruns replace the existing report; the input CSV is unchanged. Generated reports are excluded from Git.
+
+Missing or inaccessible files, missing required columns, duplicate IDs, and completely blank files stop processing before export.
+
+## Tests
+
+```bash
+python -m pytest -v
+```
+
+The pytest suite covers input errors, required columns, duplicate IDs, status and date boundaries, missing or invalid comparison dates, calendar-day calculations, empty reports, output structure, and reruns. Tests use temporary paths; permission failures are simulated without changing real file permissions.
 
 ## Author
 
