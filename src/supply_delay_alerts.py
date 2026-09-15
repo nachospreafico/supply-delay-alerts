@@ -1,21 +1,28 @@
 import pandas as pd
+import numpy as np
 from pathlib import Path
 
 supply_orders_path = "./data/supply_orders.csv"
 
-def supply_delay_alerts(file_path):
-    df = load_csv(file_path)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+INPUT_PATH = PROJECT_ROOT / "data" / "supply_orders.csv"
+OUTPUT_PATH = PROJECT_ROOT / "outputs" / "overdue_orders.csv"
+
+
+def supply_delay_alerts(file_path, output_path=OUTPUT_PATH):
+    df = load_csv(Path(file_path))
     check_for_required_columns(df)
     check_for_duplicated_values_on_order_id(df)
-    df = filter_df(df)
-    date_cols = [
-        "promised_delivery_date",
-        "actual_delivery_date",
-        "snapshot_date"
-    ]
-    df = convert_dates_to_datetime(df, date_cols)
-    check_dates_are_datetime(df, date_cols)
+    df = filter_active_orders(df)
+    df = convert_dates_to_datetime(df)
+    df = add_days_overdue_column(df)
+    save_report(df, output_path)
+    return df
 
+def save_report(df, output_path):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
 
 def load_csv(file_path):
     try:
@@ -58,13 +65,29 @@ def check_for_duplicated_values_on_order_id(df):
     if df["order_id"].duplicated().any():
         raise ValueError("Duplicated values in order_id, this is not allowed.")
 
-def filter_df(df):
+def filter_active_orders(df):
     active_statuses = ["Pending", "Shipped", "Partially Delivered"]
     filtered_df = df[df["status"].isin(active_statuses)].copy()
     return filtered_df
 
-def convert_dates_to_datetime(df, date_cols):
+def convert_dates_to_datetime(df):
+    date_cols = [
+            "promised_delivery_date",
+            "snapshot_date"
+        ]
     for date_col in date_cols:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     return df
 
+def add_days_overdue_column(df):
+    df = df[
+        df["promised_delivery_date"] < df["snapshot_date"]
+    ].copy()
+    df["days_overdue"] = (
+        df["snapshot_date"] - df["promised_delivery_date"]
+    ).dt.days
+    return df
+
+if __name__ == "__main__":
+    result = supply_delay_alerts(INPUT_PATH)
+    print(f"Saved {len(result)} overdue orders to {OUTPUT_PATH}")
